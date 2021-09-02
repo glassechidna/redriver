@@ -27,13 +27,13 @@ func New(queueUrl string, sqs sqsiface.SQSAPI, streams dynamodbstreamsiface.Dyna
 	return &Redriver{queueUrl: queueUrl, sqs: sqs, streams: streams, lambda: lambda}
 }
 
-func (w *Redriver) Handle(ctx context.Context) error {
+func (w *Redriver) Run(ctx context.Context, async bool) error {
 	received := 1
 	total := 0
 	var err error
 
 	for received > 0 {
-		received, err = w.receive(ctx)
+		received, err = w.receive(ctx, async)
 		if err != nil {
 			return err
 		}
@@ -45,7 +45,7 @@ func (w *Redriver) Handle(ctx context.Context) error {
 	return nil
 }
 
-func (w *Redriver) receive(ctx context.Context) (int, error) {
+func (w *Redriver) receive(ctx context.Context, async bool) (int, error) {
 	receive, err := w.sqs.ReceiveMessageWithContext(ctx, &sqs.ReceiveMessageInput{
 		MaxNumberOfMessages: aws.Int64(10),
 		WaitTimeSeconds:     aws.Int64(20),
@@ -69,10 +69,16 @@ func (w *Redriver) receive(ctx context.Context) (int, error) {
 			return 0, err
 		}
 
-		invoke, err := w.lambda.InvokeWithContext(ctx, &lambda.InvokeInput{
+		input := &lambda.InvokeInput{
 			FunctionName: &item.RequestContext.FunctionArn,
 			Payload:      payload,
-		})
+		}
+
+		if async {
+			input.InvocationType = aws.String(lambda.InvocationTypeEvent)
+		}
+
+		invoke, err := w.lambda.InvokeWithContext(ctx, input)
 		if err != nil {
 			return 0, errors.WithStack(err)
 		}
